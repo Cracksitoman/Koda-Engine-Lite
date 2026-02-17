@@ -10,7 +10,7 @@ import { updatePhysics, performItemAction } from './services/gameEngine';
 import { v4 as uuidv4 } from 'uuid';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
-const SAVE_KEY = 'pocket_gamemaker_project_v1';
+const SAVE_KEY = 'koda_engine_lite_v1';
 
 const DEFAULT_SCENE: Scene = {
     id: 'scene_1',
@@ -99,7 +99,9 @@ const App: React.FC = () => {
   }, [currentSceneIndex, scenes, mode]);
 
   // --- Persistence ---
-  const handleSave = (silent = false) => {
+
+  // 1. Quick Save (Internal/LocalStorage) - Used for auto-saving UI edits
+  const handleQuickSave = (silent = false) => {
       try {
           const scenesToSave = [...scenes];
           if (mode === 'editing') {
@@ -110,59 +112,405 @@ const App: React.FC = () => {
               settings: settings
           };
           localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
-          if (!silent) alert("Project saved successfully!");
+          if (!silent) console.log("Quick save successful");
       } catch (e) {
-          alert("Failed to save project (Storage might be full due to images)");
+          console.warn("Quick save failed (Storage might be full)");
       }
   };
 
-  const handleLoad = () => {
-      const saved = localStorage.getItem(SAVE_KEY);
-      if (saved) {
-          try {
-              const parsed = JSON.parse(saved);
-              // Handle old save format (array of scenes) vs new format (object with settings)
-              let loadedScenes = [];
-              let loadedSettings = DEFAULT_SETTINGS;
+  // 2. File Save (Download JSON) - Used for "Save Project"
+  const handleSaveProject = () => {
+      // Sync current state
+      const scenesToSave = [...scenes];
+      if (mode === 'editing') {
+          scenesToSave[currentSceneIndex].entities = activeEntities;
+      }
+      
+      const projectData = {
+          version: '1.0',
+          timestamp: Date.now(),
+          scenes: scenesToSave,
+          settings: settings
+      };
 
-              if (Array.isArray(parsed)) {
-                  loadedScenes = parsed;
-              } else {
-                  loadedScenes = parsed.scenes || [DEFAULT_SCENE];
-                  loadedSettings = {
-                      ...DEFAULT_SETTINGS,
-                      ...parsed.settings,
-                      controlLayout: parsed.settings?.controlLayout || DEFAULT_CONTROL_LAYOUT // Merge layout
-                  };
+      try {
+        const jsonStr = JSON.stringify(projectData);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `KodaEngine_Project_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+          alert("Failed to create save file. The project might be too large (too many images).");
+      }
+  };
+
+  // 3. File Load (Upload JSON) - Used for "Load Project"
+  const handleLoadProject = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.onchange = (e) => {
+          const file = (e.target as HTMLInputElement).files?.[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = (event) => {
+              try {
+                  const content = event.target?.result as string;
+                  const parsed = JSON.parse(content);
+                  
+                  let loadedScenes = [];
+                  let loadedSettings = DEFAULT_SETTINGS;
+
+                  // Handle format
+                  if (parsed.scenes && Array.isArray(parsed.scenes)) {
+                      loadedScenes = parsed.scenes;
+                      if (parsed.settings) loadedSettings = parsed.settings;
+                  } else if (Array.isArray(parsed)) {
+                      loadedScenes = parsed;
+                  } else {
+                      throw new Error("Invalid project format");
+                  }
+                  
+                  setScenes(loadedScenes);
+                  setSettings(loadedSettings);
+                  setCurrentSceneIndex(0);
+                  setMode('editing');
+                  setActiveEntities(loadedScenes[0].entities);
+                  alert("Project loaded successfully!");
+              } catch (err) {
+                  console.error(err);
+                  alert("Error loading project. File might be corrupted.");
               }
-              
-              setScenes(loadedScenes);
-              setSettings(loadedSettings);
-              setCurrentSceneIndex(0);
-              setMode('editing');
-              setActiveEntities(loadedScenes[0].entities);
-          } catch (e) {
-              console.error(e);
-              alert("Error loading file.");
-          }
-      } else {
-          alert("No saved project found.");
-      }
+          };
+          reader.readAsText(file);
+      };
+      input.click();
   };
 
-  // --- EXPORT TO ANDROID (Standalone HTML) ---
+  // --- EXPORT TO ANDROID/HTML (Standalone Engine) ---
   const handleExport = () => {
     const scenesToExport = [...scenes];
     if (mode === 'editing') {
         scenesToExport[currentSceneIndex].entities = activeEntities;
     }
-    // Note: To fully support the custom control layout in the export, 
-    // the layout JSON would need to be injected into the HTML CSS/JS.
-    // For brevity in this answer, we are keeping the export basic, 
-    // but in a real app, you'd inject settings.controlLayout into the JS.
-    const htmlContent = `... (Export logic would go here, injecting settings.controlLayout) ...`;
-    alert("Export generated! (Custom controls will be included in full version)");
-    // ... existing export code ...
+    const exportData = {
+        scenes: scenesToExport,
+        settings: settings,
+        initialScene: 0
+    };
+
+    // We inject a "Runtime" script that mimics the gameEngine.ts logic
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Koda Engine Lite</title>
+    <style>
+        body { margin: 0; background: #111827; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+        canvas { display: block; width: 100%; height: 100%; }
+        #ui { position: absolute; inset: 0; pointer-events: none; }
+        .btn { position: absolute; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; touch-action: none; pointer-events: auto; transform: translate(-50%, -50%); transition: background 0.1s; font-size: 24px; font-weight: bold; }
+        .btn:active { background: rgba(255,255,255,0.3); }
+        .btn-jump { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.4); }
+        .btn-shoot { background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.4); }
+        .btn-use { background: rgba(168, 85, 247, 0.2); border-color: rgba(168, 85, 247, 0.4); }
+        #score { position: absolute; top: 10px; left: 10px; color: #facc15; font-family: monospace; font-size: 20px; font-weight: bold; text-shadow: 1px 1px 0 #000; z-index: 10; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="score">SCORE: 0000</div>
+    <div id="ui"></div>
+    <script>
+        // --- GAME DATA ---
+        const GAME_DATA = ${JSON.stringify(exportData)};
+        
+        // --- CONSTANTS ---
+        const GRID_SIZE = 32;
+        const GRAVITY = 0.5;
+        const TERMINAL_VELOCITY = 12;
+        const JUMP_FORCE = -10;
+        const MOVE_SPEED = 4;
+        const BULLET_SPEED = 8;
+
+        // --- STATE ---
+        let currentSceneIndex = 0;
+        let entities = [];
+        let score = 0;
+        let camera = { x: 0, y: 0 };
+        let input = { left: false, right: false, jump: false, shoot: false, use: false };
+        let lastTime = 0;
+        let activeItemIndex = 0;
+        
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const ui = document.getElementById('ui');
+        
+        // --- CONTROLS SETUP ---
+        const setupControls = () => {
+            ui.innerHTML = '';
+            const layout = GAME_DATA.settings.controlLayout || {
+                left: { x: 5, y: 80, size: 1 },
+                right: { x: 25, y: 80, size: 1 },
+                jump: { x: 80, y: 75, size: 1.2 },
+                shoot: { x: 65, y: 82, size: 1 },
+                use: { x: 50, y: 82, size: 0.9 }
+            };
+
+            const createBtn = (id, label, x, y, size, cls) => {
+                const btn = document.createElement('div');
+                btn.className = 'btn ' + (cls || '');
+                btn.style.left = x + '%';
+                btn.style.top = y + '%';
+                btn.style.width = (64 * size) + 'px';
+                btn.style.height = (64 * size) + 'px';
+                btn.innerHTML = label; 
+                
+                const start = (e) => { e.preventDefault(); input[id] = true; };
+                const end = (e) => { e.preventDefault(); input[id] = false; };
+                
+                btn.addEventListener('pointerdown', start);
+                btn.addEventListener('pointerup', end);
+                btn.addEventListener('pointerleave', end);
+                ui.appendChild(btn);
+            };
+
+            createBtn('left', '←', layout.left.x, layout.left.y, layout.left.size);
+            createBtn('right', '→', layout.right.x, layout.right.y, layout.right.size);
+            createBtn('jump', '↑', layout.jump.x, layout.jump.y, layout.jump.size, 'btn-jump');
+            createBtn('shoot', '◎', layout.shoot.x, layout.shoot.y, layout.shoot.size, 'btn-shoot');
+            createBtn('use', '✋', layout.use.x, layout.use.y, layout.use.size, 'btn-use');
+        };
+
+        // --- ENGINE LOGIC ---
+        const checkCollision = (r1, r2) => {
+            return r1.position.x < r2.position.x + r2.size.x &&
+                   r1.position.x + r1.size.x > r2.position.x &&
+                   r1.position.y < r2.position.y + r2.size.y &&
+                   r1.position.y + r1.size.y > r2.position.y;
+        };
+
+        const update = (dt) => {
+            const player = entities.find(e => e.type === 'player');
+            const walls = entities.filter(e => e.type === 'wall' || e.type === 'platform');
+            const bullets = entities.filter(e => e.type === 'bullet');
+
+            // --- AI & NPC ---
+            entities.forEach(e => {
+                if (e.type === 'enemy' && e.patrolRange && e.originalX !== undefined) {
+                    e.position.x = e.originalX + Math.sin(Date.now() / 500) * e.patrolRange;
+                }
+                if (e.type === 'npc') {
+                    e.velocity.y += GRAVITY;
+                    e.position.y += e.velocity.y;
+                    walls.forEach(w => {
+                        if (checkCollision(e, w) && e.velocity.y > 0) {
+                            e.position.y = w.position.y - e.size.y;
+                            e.velocity.y = 0;
+                        }
+                    });
+                }
+            });
+
+            // --- Player ---
+            if (player) {
+                // Jump
+                if (input.jump && player.isGrounded) {
+                    player.velocity.y = player.jumpForce || JUMP_FORCE;
+                    player.isGrounded = false;
+                }
+                // Shoot
+                if (input.shoot) {
+                    input.shoot = false; // Semi-auto
+                    const dir = player.direction || 1;
+                    entities.push({
+                        id: Math.random(), type: 'bullet',
+                        position: { x: player.position.x + (dir===1?player.size.x:-10), y: player.position.y + player.size.y/2 },
+                        size: { x: 8, y: 4 }, velocity: { x: dir * BULLET_SPEED * 1.5, y: 0 },
+                        color: '#facc15', health: 1
+                    });
+                }
+                // Use Item
+                if (input.use) {
+                    input.use = false;
+                    if (player.inventory && player.inventory[activeItemIndex]) {
+                         const item = player.inventory[activeItemIndex];
+                         // Basic implementation for export
+                         if (item.usageType === 'shoot') {
+                             entities.push({
+                                id: Math.random(), type: 'bullet',
+                                position: { x: player.position.x, y: player.position.y },
+                                size: { x: 8, y: 4 }, velocity: { x: (player.direction||1) * 12, y: 0 },
+                                color: '#d946ef', health: 1
+                            });
+                         }
+                    }
+                }
+
+                // Move X
+                const speed = player.speed || MOVE_SPEED;
+                if (input.left) { player.velocity.x = -speed; player.direction = -1; }
+                else if (input.right) { player.velocity.x = speed; player.direction = 1; }
+                else { player.velocity.x *= 0.8; }
+                
+                player.position.x += player.velocity.x;
+                [...walls, ...entities.filter(e=>e.type==='npc')].forEach(w => {
+                    if (w.id!==player.id && checkCollision(player, w)) {
+                        if (player.velocity.x > 0) player.position.x = w.position.x - player.size.x;
+                        else if (player.velocity.x < 0) player.position.x = w.position.x + w.size.x;
+                        player.velocity.x = 0;
+                    }
+                });
+
+                // Move Y
+                player.velocity.y += GRAVITY;
+                if (player.velocity.y > TERMINAL_VELOCITY) player.velocity.y = TERMINAL_VELOCITY;
+                player.position.y += player.velocity.y;
+                player.isGrounded = false;
+                
+                [...walls, ...entities.filter(e=>e.type==='npc')].forEach(w => {
+                    if (w.id!==player.id && checkCollision(player, w)) {
+                        if (player.velocity.y > 0) {
+                            player.position.y = w.position.y - player.size.y;
+                            player.velocity.y = 0;
+                            player.isGrounded = true;
+                        } else if (player.velocity.y < 0 && w.type !== 'platform') {
+                            player.position.y = w.position.y + w.size.y;
+                            player.velocity.y = 0;
+                        }
+                    }
+                });
+
+                // Interactions
+                entities.forEach(e => {
+                    if (e.type === 'coin' && checkCollision(player, e) && e.health !== 0) {
+                        e.health = 0; score += 10;
+                    } else if (e.type === 'goal' && checkCollision(player, e)) {
+                        loadScene(currentSceneIndex + 1);
+                    } else if ((e.type === 'spike' || e.type === 'enemy') && checkCollision(player, e)) {
+                        loadScene(currentSceneIndex); // Restart
+                    } else if (e.type === 'collectible' && checkCollision(player, e)) {
+                        if (!player.inventory) player.inventory = [];
+                        player.inventory.push(e);
+                        e.health = 0;
+                    }
+                });
+                
+                // Death Floor
+                if (player.position.y > 2000) loadScene(currentSceneIndex);
+            }
+
+            // Bullets
+            bullets.forEach(b => {
+                b.position.x += b.velocity.x;
+                entities.filter(e => e.type === 'enemy').forEach(e => {
+                    if (checkCollision(b, e)) { e.health = 0; b.health = 0; score += 50; }
+                });
+                walls.forEach(w => { if (checkCollision(b, w)) b.health = 0; });
+            });
+
+            // Cleanup
+            entities = entities.filter(e => e.health === undefined || e.health > 0);
+        };
+
+        const render = () => {
+            // Resize
+            if (canvas.width !== window.innerWidth) canvas.width = window.innerWidth;
+            if (canvas.height !== window.innerHeight) canvas.height = window.innerHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Camera follow
+            const player = entities.find(e => e.type === 'player');
+            if (player) {
+                const targetX = player.position.x - canvas.width / 2 + player.size.x/2;
+                const targetY = player.position.y - canvas.height / 2;
+                camera.x += (targetX - camera.x) * 0.1;
+                camera.y += (targetY - camera.y) * 0.1;
+            }
+
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+
+            // Draw Entities
+            entities.forEach(e => {
+                ctx.fillStyle = e.color || '#fff';
+                if (e.type === 'text') {
+                    ctx.font = (e.fontSize||20) + 'px monospace';
+                    ctx.fillText(e.text || '', e.position.x, e.position.y);
+                } else if (e.image) {
+                     const img = new Image();
+                     img.src = e.image;
+                     ctx.drawImage(img, e.position.x, e.position.y, e.size.x, e.size.y);
+                } else {
+                    ctx.fillRect(e.position.x, e.position.y, e.size.x, e.size.y);
+                    if (e.type === 'player') { 
+                        ctx.fillStyle = '#fff';
+                        const off = (e.direction||1)===1 ? e.size.x*0.6 : e.size.x*0.1;
+                        ctx.fillRect(e.position.x + off, e.position.y + 5, 4, 4);
+                    }
+                }
+            });
+
+            ctx.restore();
+            document.getElementById('score').innerText = 'SCORE: ' + score.toString().padStart(4, '0');
+        };
+
+        const loop = (t) => {
+            update((t - lastTime) / 16);
+            render();
+            lastTime = t;
+            requestAnimationFrame(loop);
+        };
+
+        const loadScene = (idx) => {
+            if (idx >= GAME_DATA.scenes.length) { alert("YOU WIN!"); idx = 0; }
+            currentSceneIndex = idx;
+            // Deep copy
+            entities = JSON.parse(JSON.stringify(GAME_DATA.scenes[idx].entities));
+            
+            // Reset state
+            input = { left: false, right: false, jump: false, shoot: false, use: false };
+            const player = entities.find(e => e.type === 'player');
+            if (player) {
+                camera.x = player.position.x - window.innerWidth/2;
+                camera.y = player.position.y - window.innerHeight/2;
+            }
+        };
+
+        // --- INIT ---
+        setupControls();
+        loadScene(0);
+        requestAnimationFrame(loop);
+        
+        window.addEventListener('resize', () => {
+             canvas.width = window.innerWidth;
+             canvas.height = window.innerHeight;
+        });
+
+    </script>
+</body>
+</html>
+    `;
+    
+    // Create Blob and Download
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `KodaEngine_${Date.now()}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // --- Scene Management ---
@@ -270,14 +618,21 @@ const App: React.FC = () => {
   };
 
   const stopGame = () => {
-      setMode('editing');
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      
-      if (sceneSnapshotRef.current.length > 0) {
-          const currentLevelOriginal = scenes[currentSceneIndex].entities;
-          setActiveEntities(currentLevelOriginal);
+      // Ensure we clear the loop
+      if (requestRef.current) {
+          cancelAnimationFrame(requestRef.current);
+          requestRef.current = undefined;
       }
+      
+      // Restore state
+      if (sceneSnapshotRef.current.length > 0) {
+          const original = sceneSnapshotRef.current; // Use the snapshot
+          updateCurrentSceneEntities(original);
+      }
+      
+      setMode('editing');
       setCamera({ x: 0, y: 0 });
+      setZoom(1);
   };
 
   const animate = useCallback((time: number) => {
@@ -326,7 +681,7 @@ const App: React.FC = () => {
       }
 
       if (result.gameOver) {
-        alert("Game Over!");
+        // Simple restart logic
         loadSceneForPlay(currentSceneIndex);
         return; 
       }
@@ -691,8 +1046,8 @@ const App: React.FC = () => {
               onClear={() => {
                   if(confirm("Clear current scene?")) updateCurrentSceneEntities(INITIAL_ENTITIES);
               }}
-              onSave={() => handleSave()}
-              onLoad={handleLoad}
+              onSave={handleSaveProject} // Uses File Download
+              onLoad={handleLoadProject} // Uses File Upload
               onExport={handleExport}
               onRecenter={handleRecenter}
               // Zoom
@@ -736,7 +1091,7 @@ const App: React.FC = () => {
           onInputEnd={handleInputEnd}
           onStop={() => {
               if (mode === 'editing_ui') {
-                  handleSave(true); // Auto save silently on exit
+                  handleQuickSave(true); // Internal Quick Save for UI Config
                   setMode('editing');
               }
               else stopGame();

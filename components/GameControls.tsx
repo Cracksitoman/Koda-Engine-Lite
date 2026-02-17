@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, ArrowRight, ArrowUp, Crosshair, Hand, Move, GripHorizontal, Save } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUp, Crosshair, Hand, Move, GripHorizontal, Save, XCircle } from 'lucide-react';
 import { Entity, ControlLayout, ControlConfig } from '../types';
 import { DEFAULT_CONTROL_LAYOUT } from '../constants';
 
@@ -124,8 +124,8 @@ const GameControls: React.FC<GameControlsProps> = ({
     >
       
       {/* --- HUD & Top Bar --- */}
-      <div className="absolute top-0 inset-x-0 p-4 pointer-events-none flex justify-between items-start">
-        <div className="bg-black/50 backdrop-blur text-yellow-400 font-mono text-xl px-4 py-2 rounded-lg border border-yellow-500/30 pointer-events-auto">
+      <div className="absolute top-0 inset-x-0 p-4 pointer-events-none flex justify-between items-start z-[100]">
+        <div className="bg-black/50 backdrop-blur text-yellow-400 font-mono text-xl px-4 py-2 rounded-lg border border-yellow-500/30 pointer-events-auto select-none">
           SCORE: {score.toString().padStart(4, '0')}
         </div>
         
@@ -164,10 +164,20 @@ const GameControls: React.FC<GameControlsProps> = ({
              </div>
         ) : (
             <button 
-                onClick={onStop}
-                className="bg-gray-800/80 text-white px-4 py-2 rounded-lg font-bold border border-gray-600 pointer-events-auto"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onStop();
+                }}
+                onPointerDown={(e) => {
+                    e.stopPropagation();
+                    // Don't prevent default here or click might not fire on some touch devices, 
+                    // but we call onStop immediately to be safe
+                    onStop();
+                }}
+                className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-2 rounded-full font-bold border-2 border-red-800 shadow-lg pointer-events-auto active:scale-95 transition-transform flex items-center gap-2 select-none touch-none"
+                style={{ touchAction: 'none' }}
             >
-                EDIT
+                <XCircle size={20} /> STOP
             </button>
         )}
       </div>
